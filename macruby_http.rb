@@ -80,6 +80,12 @@ class MacRuby
     #   download("http://yoursite.com/login", {:credential => {:user => 'me', :password => 's3krit'}}) do |test|
     #     NSLog("response received: #{test.headers} #{test.status_code}")
     #   end
+    # 
+    #   # We can also do the same thing but synchronisly and block the runloop  
+    #   download "http://macruby.org", :immediate => true, :save_to => '~/tmp/site.html'.stringByStandardizingPath do |mr|
+    #     p "file downloaded, let's continue"
+    #   end
+    #
     def download(url, opts={}, &block)
       http_method = opts.delete(:method) || 'GET'
       delegator   = block_given? ? block : opts.delete(:delegation)
@@ -171,13 +177,35 @@ module MacRubyHTTP
       @credential             = options[:credential] || {}
       @credential             = {:user => '', :password => ''}.merge(@credential)
       
-      initiate_request(url)
-      connection.start
-      connection
+      if options[:immediate]
+        immediate_download(url)
+      else
+        initiate_request(url)
+        connection.start
+        connection
+      end
     end
     
     def to_save?
       !@path_to_save_response.nil?
+    end
+     
+    # if we don't want to gro through the callbacks
+    # we can pass the :immediate => true option
+    # and the operation will block the run loop
+    def immediate_download(url_string)
+      url = NSURL.URLWithString(url_string)
+      data = NSMutableData.dataWithContentsOfURL(url) 
+      
+      @response = ::MacRubyHTTP::Response.new(:status_code => 200, :body => data, :headers => response_headers)
+      if @delegator.is_a?(Proc)
+        @delegator.call( @response )
+      elsif !@delegator.nil? && @delegator.respond_to?(:handle_query_response)
+        @delegator.send(:handle_query_response, @response)
+      else
+        handle_query_response(@response)
+      end
+      response.body.writeToFile(@path_to_save_response, atomically:true) if to_save? 
     end
 
     protected
