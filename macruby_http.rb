@@ -81,11 +81,11 @@ class MacRuby
     #     NSLog("response received: #{test.headers} #{test.status_code}")
     #   end
     # 
-    #   # We can also do the same thing but synchronisly and block the runloop  
+    #   # We can also do the same thing but synchronously and block the runloop  
     #   download "http://macruby.org", :immediate => true, :save_to => '~/tmp/site.html'.stringByStandardizingPath do |mr|
     #     p "file downloaded, let's continue"
     #   end
-    #
+    #    
     def download(url, opts={}, &block)
       http_method = opts.delete(:method) || 'GET'
       delegator   = block_given? ? block : opts.delete(:delegation)
@@ -194,7 +194,7 @@ module MacRubyHTTP
       !@path_to_save_response.nil?
     end
      
-    # if we don't want to gro through the callbacks
+    # if we don't want to go through the callbacks
     # we can pass the :immediate => true option
     # and the operation will block the run loop
     def immediate_download(url_string)
