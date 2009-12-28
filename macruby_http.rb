@@ -23,19 +23,20 @@
 # THE SOFTWARE.
 
 class MacRuby
-  VERSION    = '0.1' unless self.const_defined?("VERSION")
+  VERSION    = '0.2' unless self.const_defined?("VERSION")
   
   module DownloadHelper
   
-    # Download helper making file download trivial
-    # Pass an url, and a block or a delegator
-    # A block takes precedence over a delegator, meaning that you can't
+    # Download helper makes file download trivial.
+    # 
+    # The result of the download can be processed by a block or a delegator.
+    # A block will always take precedence over a delegator, meaning that you can't
     # pass a delegator and use a block, you have to choose which approach
-    # to pick.
+    # you want to use.
     #
     # ==== Parameters
     # url<String>:: url of the resource to download
-    # options<Hash>:: optional options used for the query
+    # options<Hash>:: options used for the query, see +MacRubyHTTP::Query.initialize+ for more details
     # &block<block>:: block which is called when the file is downloaded
     #
     # ==== Options
@@ -51,7 +52,6 @@ class MacRuby
     # TODO
     # :progress <Proc>::    Proc to call everytime the downloader makes some progress
     # :cache_storage
-    # :custom headers
     #
     # ==== Examples
     #   download("http://www.macruby.org/files/MacRuby%200.4.zip", {:save_to => '~/tmp/macruby.zip'.stringByStandardizingPath}) do |macruby|
@@ -80,6 +80,12 @@ class MacRuby
     #   download("http://yoursite.com/login", {:credential => {:user => 'me', :password => 's3krit'}}) do |test|
     #     NSLog("response received: #{test.headers} #{test.status_code}")
     #   end
+    # 
+    #   # We can also do the same thing but synchronisly and block the runloop  
+    #   download "http://macruby.org", :immediate => true, :save_to => '~/tmp/site.html'.stringByStandardizingPath do |mr|
+    #     p "file downloaded, let's continue"
+    #   end
+    #
     def download(url, opts={}, &block)
       http_method = opts.delete(:method) || 'GET'
       delegator   = block_given? ? block : opts.delete(:delegation)
@@ -161,7 +167,9 @@ module MacRubyHTTP
     # :delegator          - Proc, class or object to call when the file is downloaded.
     #                       a proc will receive a Response object while the passed object
     #                       will receive the handle_query_response method
-    # :save_to            - Path to save the response body
+    # :save_to<String>    - Path to save the response body
+    # :headers<Hash>      - headers send with the request
+    # :blocking<Boolean>  - should the main runloop be blocked or not (default: false)
     #
     def initialize(url, http_method = 'GET', options={})
       @method                 = http_method.upcase.to_s
@@ -170,14 +178,38 @@ module MacRubyHTTP
       @payload                = options[:payload]
       @credential             = options[:credential] || {}
       @credential             = {:user => '', :password => ''}.merge(@credential)
+      @headers                = options[:headers] || {}
+      @blocking               = options[:blocking] || false
       
-      initiate_request(url)
-      connection.start
-      connection
+      if options[:immediate]
+        immediate_download(url)
+      else
+        initiate_request(url)
+        connection.start
+        connection
+      end
     end
     
     def to_save?
       !@path_to_save_response.nil?
+    end
+     
+    # if we don't want to gro through the callbacks
+    # we can pass the :immediate => true option
+    # and the operation will block the run loop
+    def immediate_download(url_string)
+      url = NSURL.URLWithString(url_string)
+      data = NSMutableData.dataWithContentsOfURL(url) 
+      
+      @response = ::MacRubyHTTP::Response.new(:status_code => 200, :body => data, :headers => response_headers)
+      if @delegator.is_a?(Proc)
+        @delegator.call( @response )
+      elsif !@delegator.nil? && @delegator.respond_to?(:handle_query_response)
+        @delegator.send(:handle_query_response, @response)
+      else
+        handle_query_response(@response)
+      end
+      response.body.writeToFile(@path_to_save_response, atomically:true) if to_save? 
     end
 
     protected
@@ -186,16 +218,25 @@ module MacRubyHTTP
       # http://developer.apple.com/documentation/Cocoa/Reference/Foundation/Classes/nsrunloop_Class/Reference/Reference.html#//apple_ref/doc/constant_group/Run_Loop_Modes
       # NSConnectionReplyMode
       @url          = NSURL.URLWithString(url_string)
-      @request      = NSMutableURLRequest.requestWithURL(@url)
+      @request      = NSMutableURLRequest.requestWithURL(@url, 
+                                          cachePolicy:NSURLRequestReloadIgnoringCacheData,
+                                          timeoutInterval:30.0)
       @request.setHTTPMethod @method
+      @request.allHTTPHeaderFields = @headers unless @headers.empty?
+
       # @payload needs to be converted to data
       unless method == 'GET' || @payload.nil?
         @payload = @payload.to_s.dataUsingEncoding(NSUTF8StringEncoding)
         @request.setHTTPBody @payload
       end
       @connection   = NSURLConnection.connectionWithRequest(request, delegate:self)
+      @request.instance_variable_set("@done_loading", false)
+      def @request.done_loading; @done_loading; end
+      def @request.done_loading!; @done_loading = true; end
       
-      #@connection.scheduleInRunLoop(NSRunLoop.currentRunLoop, forMode:NSConnectionReplyMode)
+      if @blocking
+        NSRunLoop.currentRunLoop.runUntilDate(NSDate.alloc.init) until @request.done_loading
+      end
     end
 
     def connection(connection, didReceiveResponse:response)
@@ -208,12 +249,21 @@ module MacRubyHTTP
     def connection(connection, didReceiveData:received_data)
       @received_data ||= NSMutableData.new
       @received_data.appendData(received_data)
-      # NSLog("data chunck received")
+    end
+    
+    def connection(connection, willSendRequest:request, redirectResponse:redirect_response)
+      puts "redirected #{request.description}"
+      new_request = request.mutableCopy
+      new_request.allHTTPHeaderFields = @headers unless @headers.empty?
+      @connection = NSURLConnection.connectionWithRequest(new_request, delegate:self)
+      new_request
     end
 
     # The transfer is done and everything went well
     def connectionDidFinishLoading(connection)
-      response_body =  @received_data.dup if @received_data
+      puts 'done'
+      @request.done_loading!
+      response_body = @received_data.dup if @received_data
       @response = ::MacRubyHTTP::Response.new(:status_code => status_code, :body => response_body, :headers => response_headers)
       @received_data = nil
       if @delegator.is_a?(Proc)
