@@ -76,9 +76,18 @@ class MacRubyHelper
     #
     #   download "http://localhost:5984/couchrest-test/", :method => 'POST', :payload => '{"user":"mattaimonetti@gmail.com","zip":92129}', :delegation => self
     #
-    #   download("http://yoursite.com/login", {:credential => {:user => 'me', :password => 's3krit'}}) do |test|
+    #   download("http://yoursite.com/login", {:credential => {:user => 'me', :password => 's3krit'}}) do |test, dl|
     #     NSLog("response received: #{test.headers} #{test.status_code}")
     #   end
+    #
+    #   download url, :save_to => torrent_path, :destination => download_destination, :item => item, :file => filename do |torrent, dl|
+    #     if torrent.status_code == 200      
+    #       destination = dl.options[:destination]
+    #       add_to_transmission_queue(dl.path_to_save_response, destination) if destination 
+    #       add_to_logs(dl.options[:item].guid, dl.options[:file], dl.options[:pubDate])
+    #     end
+    #   end
+    #   
     # 
     #   # We can also do the same thing but synchronously and block the runloop  
     #   download "http://macruby.org", :immediate => true, :save_to => '~/tmp/site.html'.stringByStandardizingPath do |mr|
@@ -150,12 +159,14 @@ module MacRubyHTTP
     attr_accessor :credential # username & password has a hash
     attr_accessor :proxy_credential # credential supplied to proxy servers
     attr_accessor :post_data
-    attr_reader :method
+    attr_reader   :method
 
     attr_reader :response
     attr_reader :status_code
     attr_reader :response_headers
     attr_reader :response_size
+    attr_reader :options
+    attr_reader :path_to_save_response
 
 
     # ==== Parameters
@@ -171,18 +182,21 @@ module MacRubyHTTP
     # :save_to<String>   - Path to save the response body
     # :headers<Hash>     - headers send with the request
     # :blocking<Boolean> - should the main runloop be blocked or not (default: false)
+    # Anything else will be available via the options attribute reader.
     #
     def initialize(url, http_method = 'GET', options={})
       @method = http_method.upcase.to_s
-      @delegator = options[:delegator] || self
-      @path_to_save_response = options[:save_to]
-      @payload = options[:payload]
-      @credential = options[:credential] || {}
+      @delegator = options.delete(:delegator) || self
+      @path_to_save_response = options.delete(:save_to)
+      @payload = options.delete(:payload)
+      @credential = options.delete(:credential) || {}
       @credential = {:user => '', :password => ''}.merge(@credential)
-      @headers = options[:headers] || {}
-      @blocking = options[:blocking] || false
-      
-      if options[:immediate]
+      @headers = options.delete(:headers) || {}
+      @blocking = options.delete(:blocking) || false
+      immediate = options.delete(:immediate)
+      @options = options
+
+      if immediate
         immediate_download(url)
       else
         initiate_request(url)
@@ -277,7 +291,7 @@ module MacRubyHTTP
       @response = ::MacRubyHTTP::Response.new(:status_code => status_code, :body => response_body, :headers => response_headers, :url => @url)
       @received_data = nil
       if @delegator.is_a?(Proc)
-        @delegator.call( @response )
+        @delegator.call( @response, self )
       elsif !@delegator.nil? && @delegator.respond_to?(:handle_query_response)
         @delegator.send(:handle_query_response, @response)
       else
