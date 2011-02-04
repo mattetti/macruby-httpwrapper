@@ -95,7 +95,7 @@ class MacRubyHelper
 end
 
 module MacRubyHTTP
-  VERSION    = '0.3' unless self.const_defined?("VERSION")
+  VERSION    = '0.3.1' unless self.const_defined?("VERSION")
   
   class Response
     attr_reader :body
@@ -272,7 +272,7 @@ module MacRubyHTTP
     def connectionDidFinishLoading(connection)
       @request.done_loading!
       response_body = @received_data.dup if @received_data
-      response_body.writeToFile(@path_to_save_response, atomically:true) if @received_dat && to_save?
+      response_body.writeToFile(@path_to_save_response, atomically:true) if @received_data && to_save?
       
       @response = ::MacRubyHTTP::Response.new(:status_code => status_code, :body => response_body, :headers => response_headers, :url => @url)
       @received_data = nil
