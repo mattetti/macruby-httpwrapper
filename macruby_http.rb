@@ -32,6 +32,8 @@ class MacRubyHelper
     # A block will always take precedence over a delegator, meaning that you can't
     # pass a delegator and use a block, you have to choose which approach
     # you want to use.
+    # NOTE: in the case of a non blocking download, the delegation block can be called multiple times
+    # due to a bug in Cocoa. (or maybe it's an undocumented feature ;)).
     #
     # ==== Parameters
     # url<String>:: url of the resource to download
@@ -76,18 +78,9 @@ class MacRubyHelper
     #
     #   download "http://localhost:5984/couchrest-test/", :method => 'POST', :payload => '{"user":"mattaimonetti@gmail.com","zip":92129}', :delegation => self
     #
-    #   download("http://yoursite.com/login", {:credential => {:user => 'me', :password => 's3krit'}}) do |test, dl|
+    #   download("http://yoursite.com/login", {:credential => {:user => 'me', :password => 's3krit'}}) do |test|
     #     NSLog("response received: #{test.headers} #{test.status_code}")
     #   end
-    #
-    #   download url, :save_to => torrent_path, :destination => download_destination, :item => item, :file => filename do |torrent, dl|
-    #     if torrent.status_code == 200      
-    #       destination = dl.options[:destination]
-    #       add_to_transmission_queue(dl.path_to_save_response, destination) if destination 
-    #       add_to_logs(dl.options[:item].guid, dl.options[:file], dl.options[:pubDate])
-    #     end
-    #   end
-    #   
     # 
     #   # We can also do the same thing but synchronously and block the runloop  
     #   download "http://macruby.org", :immediate => true, :save_to => '~/tmp/site.html'.stringByStandardizingPath do |mr|
@@ -104,7 +97,7 @@ class MacRubyHelper
 end
 
 module MacRubyHTTP
-  VERSION    = '0.3.1' unless self.const_defined?("VERSION")
+  VERSION    = '0.3.2' unless self.const_defined?("VERSION")
   
   class Response
     attr_reader :body
@@ -285,11 +278,12 @@ module MacRubyHTTP
     # The transfer is done and everything went well
     def connectionDidFinishLoading(connection)
       @request.done_loading!
+
       response_body = @received_data.dup if @received_data
-      response_body.writeToFile(@path_to_save_response, atomically:true) if @received_data && to_save?
-      
+      response_body.writeToFile(@path_to_save_response, atomically:true) if @received_data && to_save? && status_code == 200
       @response = ::MacRubyHTTP::Response.new(:status_code => status_code, :body => response_body, :headers => response_headers, :url => @url)
-      @received_data = nil
+      # Don't reset the received data since this method can be called multiple times if the headers report the wrong length.
+      # @received_data = nil
       if @delegator.is_a?(Proc)
         @delegator.call( @response, self )
       elsif !@delegator.nil? && @delegator.respond_to?(:handle_query_response)
