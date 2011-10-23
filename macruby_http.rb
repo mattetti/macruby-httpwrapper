@@ -279,8 +279,11 @@ module MacRubyHTTP
     def connectionDidFinishLoading(connection)
       @request.done_loading!
 
-      response_body = @received_data.dup if @received_data
-      response_body.writeToFile(@path_to_save_response, atomically:true) if @received_data && to_save? && status_code == 200
+      # copy the data in a local var that we will attach to the response object
+      response_body = NSData.dataWithData(@received_data) if @received_data
+      if @received_data && to_save? && status_code == 200
+        @received_data.writeToFile(@path_to_save_response, atomically:true)
+      end
       @response = ::MacRubyHTTP::Response.new(:status_code => status_code, :body => response_body, :headers => response_headers, :url => @url)
       # Don't reset the received data since this method can be called multiple times if the headers report the wrong length.
       # @received_data = nil
