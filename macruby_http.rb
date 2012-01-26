@@ -271,6 +271,7 @@ module MacRubyHTTP
       # puts "redirected #{request.description}"
       new_request = request.mutableCopy
       new_request.allHTTPHeaderFields = @headers unless @headers.empty?
+      @connection.cancel
       @connection = NSURLConnection.connectionWithRequest(new_request, delegate:self)
       new_request
     end
